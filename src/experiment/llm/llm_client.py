@@ -25,7 +25,8 @@ class LLMClient:
                 model=self.config.get_model_string(),
                 messages=[{"role": "user", "content": prompt}],
                 api_key=self.config.api_key,
-                api_base=self.config.api_base
+                api_base=self.config.api_base,
+                verbose=False
             )
             
             return response.choices[0].message.content
