@@ -1,5 +1,5 @@
 import pandas as pd
-
+import os
 
 def add_row_to_dataframe(df, commit_sha, conflict_resolution, index, total_rows):
     new_row = pd.DataFrame([{
@@ -21,3 +21,9 @@ def handle_error(df, row, error, index):
     }])
 
     return pd.concat([df, new_row], ignore_index=True)
+
+
+def get_project_root():
+    """Get the absolute path to the project root directory"""
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    return os.path.dirname(os.path.dirname(current_dir))

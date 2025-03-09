@@ -1,19 +1,40 @@
 from .conflict_resolution_generator import process_dataframe
-from .client.gemini_client import generate_content
-
+from .config.cli_config import setup_cli_parser, get_llm_config_from_args
+from .llm.llm_client import LLMClient
+from .utils import get_project_root
 import pandas as pd
+import os
 
 
-df = pd.read_json("data/eclipse_val_conflicts.jsonl", lines=True, nrows=3)
+def main():
+    parser = setup_cli_parser()
+    args = parser.parse_args()
+    
+    llm_config = get_llm_config_from_args(args)
+    llm_client = LLMClient(llm_config)
+    print(f"Using provider: {llm_config.provider}, model: {llm_config.model}")
 
-start_index = 0
-max_requests = 1500 
+    project_root = get_project_root()
+    
+    input_path = os.path.join(project_root, "data", "eclipse_val_conflicts.jsonl")
+    df = pd.read_json(input_path, lines=True, nrows=1)
+    
+    start_index = 0
+    max_requests = 1500 
 
-result_df, last_processed_index = process_dataframe(df, 
-                                                    'gemini-2.0-flash',
-                                                    # "gemini-2.0-flash-thinking-exp-01-21",
-                                                    generate_content, 
-                                                    start_index, 
-                                                    max_requests)
-print("last_processed_index", last_processed_index)
-result_df.to_json("output/solved_conflicts.json", orient="records")
+    result_df, last_processed_index = process_dataframe(df,
+                                                        llm_client.generate_content, 
+                                                        start_index, 
+                                                        max_requests)
+    print("last_processed_index", last_processed_index)
+
+    output_dir = os.path.join(project_root, "data", "output")
+    os.makedirs(output_dir, exist_ok=True)
+    
+    output_path = os.path.join(output_dir, "solved_conflicts.json")
+    result_df.to_json(output_path, orient="records")
+    print(f"Results saved to {output_path}")
+
+
+if __name__ == "__main__":
+    main()
