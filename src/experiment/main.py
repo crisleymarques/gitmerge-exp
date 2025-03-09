@@ -98,9 +98,11 @@ def save_results(result_df, llm_config, project_root):
     output_dir = os.path.join(project_root, "data", "output")
     os.makedirs(output_dir, exist_ok=True)
     
-    output_path = os.path.join(output_dir, "solved_conflicts.json")
+    model_name = llm_config.model.split('/')[-1].lower()
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"solved_conflicts_{model_name}_{timestamp}.json"
+    output_path = os.path.join(output_dir, filename)
     
-    # Criar um dicionário com metadados e resultados
     output_data = {
         "metadata": {
             "provider": llm_config.provider,
