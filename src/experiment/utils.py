@@ -65,7 +65,7 @@ def setup_logger():
 logger = setup_logger()
 
 
-def add_row_to_dataframe(df, commit_sha, conflict_resolution, index, total_rows):
+def add_row_to_dataframe(df, commit_sha, conflict_resolution, id):
     """
     Adiciona uma nova linha ao DataFrame de resultados.
     
@@ -73,13 +73,13 @@ def add_row_to_dataframe(df, commit_sha, conflict_resolution, index, total_rows)
         df: DataFrame de resultados
         commit_sha: SHA do commit
         conflict_resolution: Resolução do conflito
-        index: Índice atual
-        total_rows: Total de linhas
+        id: ID do registro
         
     Returns:
         DataFrame atualizado
     """
     new_row = pd.DataFrame([{
+        'id': id,
         'commit_sha': commit_sha,
         'conflict_resolution': conflict_resolution
     }])
@@ -96,12 +96,12 @@ def handle_error(df, row, error):
         df: DataFrame de resultados
         row: Linha que causou o erro
         error: Exceção capturada
-        index: Índice atual
         
     Returns:
         DataFrame atualizado
     """
     new_row = pd.DataFrame([{
+        'id': row['id'] if 'id' in row else row.name,
         'commit_sha': row['commit_sha'],
         'conflict_resolution': f"Erro ao gerar: {error}"
     }])

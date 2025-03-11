@@ -20,7 +20,7 @@ def process_dataframe(df, generate_content_fn, start_index=0, max_requests=None,
     Returns:
         (DataFrame with resolutions, ending index)
     """
-    res_df = pd.DataFrame(columns=['commit_sha', 'conflict_resolution'])
+    res_df = pd.DataFrame(columns=['id', 'commit_sha', 'conflict_resolution'])
     total_rows = len(df)
     
     if max_requests is None:
@@ -50,7 +50,7 @@ def process_dataframe(df, generate_content_fn, start_index=0, max_requests=None,
             
             logger.success(f"Resolvido em {elapsed_time:.2f}s")
             
-            res_df = add_row_to_dataframe(res_df, row['commit_sha'], response_text, index, total_rows)
+            res_df = add_row_to_dataframe(res_df, row['commit_sha'], response_text, row['id'])
             
         except Exception as e:
             logger.error(f"Erro no processamento")
