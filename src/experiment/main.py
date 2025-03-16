@@ -165,7 +165,8 @@ def process_data(df, generate_content_fn, start_index=0, max_requests=1500, chec
                 df, 
                 generate_content_fn, 
                 current_index, 
-                end_index - current_index
+                end_index - current_index,
+                wait_time=EXPERIMENT_WAIT_TIME
             )
             
             current_index = end_index
@@ -185,6 +186,11 @@ def process_data(df, generate_content_fn, start_index=0, max_requests=1500, chec
                     is_final=False
                 )
                 logger.info(f"Checkpoint salvo no índice {end_index}: {checkpoint_path}")
+                
+                # Aguardar entre lotes para evitar atingir rate limits
+                if current_index < min(total_rows, start_index + max_requests):
+                    logger.info(f"Aguardando {EXPERIMENT_WAIT_TIME}s antes do próximo lote...")
+                    time.sleep(EXPERIMENT_WAIT_TIME)
             
             if last_idx < end_index - 1:
                 logger.warning(f"Processamento interrompido no índice {last_idx}")
