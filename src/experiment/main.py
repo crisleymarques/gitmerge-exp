@@ -10,6 +10,16 @@ import json
 import time
 import os
 
+INPUT_DATA_DIR = "data"
+INPUT_DATA_FILE = "elastic_train_conflicts.jsonl"
+OUTPUT_DIR = "data/output"
+
+EXPERIMENT_NROWS = 2245
+EXPERIMENT_START_INDEX = 1300
+EXPERIMENT_MAX_REQUESTS = 1500
+EXPERIMENT_CHECKPOINT_INTERVAL = 50
+
+REPOSITORY_NAME = "elastic"
 
 def setup_llm():
     """
@@ -43,10 +53,10 @@ def load_input_data(project_root, nrows=1):
     """
     logger.section("Carregando dados")
     
-    input_path = os.path.join(project_root, "data", "eclipse_val_conflicts.jsonl")
+    input_path = os.path.join(project_root, INPUT_DATA_DIR, INPUT_DATA_FILE)
     
     start_time = time.time()
-    df = pd.read_json(input_path, lines=True, nrows=nrows)
+    df = pd.read_json(open(input_path, 'r'), lines=True, nrows=nrows)
     elapsed_time = time.time() - start_time
     
     logger.success(f"Carregados {len(df)} registros em {elapsed_time:.2f}s")
@@ -67,7 +77,7 @@ def save_checkpoint(result_df, llm_config, project_root, last_processed_index, i
     """
     logger.section("Salvando " + ("resultados finais" if is_final else "checkpoint"))
     
-    output_dir = os.path.join(project_root, "data", "output")
+    output_dir = os.path.join(project_root, OUTPUT_DIR)
     os.makedirs(output_dir, exist_ok=True)
     
     model_name = llm_config.model.split('/')[-1].lower()
@@ -84,6 +94,7 @@ def save_checkpoint(result_df, llm_config, project_root, last_processed_index, i
         "metadata": {
             "provider": llm_config.provider,
             "model": llm_config.model,
+            "repository_name": REPOSITORY_NAME,
             "timestamp": datetime.now().isoformat(),
             "total_records": len(result_df),
             "last_processed_index": last_processed_index,
@@ -201,14 +212,14 @@ def main():
     
     project_root = get_project_root()
     
-    df = load_input_data(project_root, nrows=1300)
+    df = load_input_data(project_root, nrows=EXPERIMENT_NROWS)
     
-    # Processar os dados com checkpoints a cada 50 itens
     result_df, last_processed_index = process_data(
         df, 
         llm_client.generate_content,
-        start_index=0,
-        checkpoint_interval=50,
+        start_index=EXPERIMENT_START_INDEX,
+        max_requests=EXPERIMENT_MAX_REQUESTS,
+        checkpoint_interval=EXPERIMENT_CHECKPOINT_INTERVAL,
         project_root=project_root,
         llm_config=llm_config
     )

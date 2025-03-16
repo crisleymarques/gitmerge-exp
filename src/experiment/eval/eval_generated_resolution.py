@@ -1,13 +1,19 @@
-import json
-import pandas as pd
-import numpy as np
 from difflib import SequenceMatcher
-import re
 from pathlib import Path
 
+import pandas as pd
+import numpy as np
+import json
+import re
 
-dataset_path = 'data/elastic_train_conflicts.jsonl'
-resolution_path = 'data/output/2-elastic-gemini_20250311/solved_conflicts_gemini-2.0-flash_20250311_071912.json'
+DATASET_PATH = 'data/elastic_train_conflicts.jsonl'
+RESOLUTION_PATH = 'data/output/2-elastic-gemini_20250311/all_solved_conflicts_gemini-2.0-flash_elastic.json'
+OUTPUT_DIR = Path('data/evaluation')
+
+SIMILARITY_THRESHOLD = 90 # Threshold percentage for considering approaches the same
+
+EVALUATION_FILENAME_FORMAT = "{repo_name}-{model_name}-evaluation.json"
+SUMMARY_FILENAME_FORMAT = "{repo_name}-{model_name}-summary.json"
 
 def normalize_code(code):
     """
@@ -47,7 +53,7 @@ def load_original_conflicts():
     Load the original conflicts from the dataset file.
     """
     conflicts = {}
-    with open(dataset_path, 'r') as f:
+    with open(DATASET_PATH, 'r') as f:
         for line in f:
             data = json.loads(line)
             conflicts[data['id']] = {
@@ -64,7 +70,7 @@ def load_generated_resolutions():
     """
     Load the generated resolutions from the results file.
     """
-    with open(resolution_path, 'r') as f:
+    with open(RESOLUTION_PATH, 'r') as f:
         data = json.load(f)
     
     results = data['results']
@@ -112,7 +118,7 @@ def evaluate_resolutions():
             approach = "custom"
             highest_sim = max(a_similarity, b_similarity, base_similarity)
             
-            if highest_sim > 90:  # Threshold for considering it's the same
+            if highest_sim > SIMILARITY_THRESHOLD:  # Threshold for considering it's the same
                 if highest_sim == a_similarity:
                     approach = "chose_a"
                 elif highest_sim == b_similarity:
@@ -161,15 +167,20 @@ def save_evaluation_results(df):
     print(f"Exact matches: {df['exact_match'].sum()} ({df['exact_match'].mean()*100:.2f}%)")
     print(f"Average similarity: {df['similarity'].mean():.2f}%")
     
-    output_dir = Path('data/evaluation')
-    output_dir.mkdir(exist_ok=True)
+    OUTPUT_DIR.mkdir(exist_ok=True)
     
-    # Ensure path is structured to include model name
-    model_name = resolution_path.split('/')[-2].split('-')[1]  # Extract 'elastic' from path
+    with open(RESOLUTION_PATH, 'r') as f:
+        resolution_data = json.load(f)
+        metadata = resolution_data.get('metadata', {})
+        model_name = metadata.get('model', 'unknown')
+        repo_name = metadata.get('repository_name', 'unknown')
     
     # Save main evaluation results
-    results_filename = f"{model_name}-resolution_evaluation.json"
-    df.to_json(output_dir / results_filename, orient='records', indent=2)
+    results_filename = EVALUATION_FILENAME_FORMAT.format(
+        repo_name=repo_name,
+        model_name=model_name
+    )
+    df.to_json(OUTPUT_DIR / results_filename, orient='records', indent=2)
     
     # Save file extension summary
     df['file_extension'] = df['filename'].apply(lambda x: x.split('.')[-1] if '.' in x else 'unknown')
@@ -182,11 +193,14 @@ def save_evaluation_results(df):
     
     # Convert the multi-index DataFrame to a format suitable for JSON
     ext_summary_json = ext_summary.reset_index().to_dict(orient='records')
-    ext_summary_filename = f"{model_name}-file_extension_summary.json"
-    with open(output_dir / ext_summary_filename, 'w') as f:
+    ext_summary_filename = SUMMARY_FILENAME_FORMAT.format(
+        repo_name=repo_name,
+        model_name=model_name
+    )
+    with open(OUTPUT_DIR / ext_summary_filename, 'w') as f:
         json.dump(ext_summary_json, f, indent=2, default=json_serialize)
     
-    print(f"Results saved to '{output_dir / results_filename}' and '{output_dir / ext_summary_filename}'")
+    print(f"Results saved to '{OUTPUT_DIR / results_filename}' and '{OUTPUT_DIR / ext_summary_filename}'")
     
     return results_filename, ext_summary_filename
 
