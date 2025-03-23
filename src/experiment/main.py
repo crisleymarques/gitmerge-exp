@@ -3,21 +3,25 @@ from .config.cli_config import setup_cli_parser, get_llm_config_from_args
 from .llm.llm_client import LLMClient
 from .utils import get_project_root, logger
 from datetime import datetime
+from glob import glob
 
 import pandas as pd
+import argparse
 import logging
 import json
 import time
 import os
 
-INPUT_DATA_DIR = "data"
-INPUT_DATA_FILE = "elastic_train_conflicts.jsonl"
-OUTPUT_DIR = "data/output"
+
+INPUT_DATA_DIR = "data/dataset"
+INPUT_DATA_FILE = "elastic/elastic_train_conflicts.jsonl"
+OUTPUT_DIR = "data/output/2-elastic_qwen_20250316"
 
 EXPERIMENT_NROWS = 2245
 EXPERIMENT_START_INDEX = 1300
 EXPERIMENT_MAX_REQUESTS = 1500
 EXPERIMENT_CHECKPOINT_INTERVAL = 50
+EXPERIMENT_WAIT_TIME = 30
 
 REPOSITORY_NAME = "elastic"
 
@@ -235,6 +239,214 @@ def main():
     elapsed_time = time.time() - start_time
     logger.section("Concluído")
     logger.success(f"Tempo total: {elapsed_time:.2f}s")
+
+
+def regenerate_failed_resolutions(input_file, llm_client, wait_time=EXPERIMENT_WAIT_TIME, output_file=None, save_to_original=False):
+    """
+    Regenera as resoluções de conflitos que falharam devido a erros na API do LLM.
+    
+    Args:
+        input_file (str): Caminho para o arquivo JSON com os resultados
+        llm_client (LLMClient): Cliente LLM configurado
+        wait_time (int): Tempo de espera entre requisições
+        output_file (str, optional): Caminho para salvar o novo arquivo
+        save_to_original (bool): Se True, substitui o arquivo original
+        
+    Returns:
+        str: Caminho do arquivo de saída
+    """
+    logger.section(f"Regenerando resoluções com erro em: {input_file}")
+    
+    # Carregar resultados
+    try:
+        with open(input_file, 'r') as f:
+            data = json.load(f)
+        
+        if isinstance(data, dict) and 'results' in data:
+            metadata = data.get('metadata', {})
+            results = data['results']
+        else:
+            metadata = {}
+            results = data
+    except Exception as e:
+        logger.error(f"Erro ao carregar o arquivo: {str(e)}")
+        return None
+    
+    # Identificar resoluções com erro
+    failed_indices = []
+    for i, result in enumerate(results):
+        resolution = result.get('conflict_resolution', '')
+        # Verificar se contém mensagens de erro
+        if isinstance(resolution, str) and (
+            resolution.startswith("Erro ao gerar") or 
+            "Error generating content" in resolution or 
+            "RateLimitError" in resolution or
+            "rate_limit_exceeded" in resolution
+        ):
+            failed_indices.append(i)
+    
+    logger.info(f"Encontradas {len(failed_indices)} resoluções com erro")
+    
+    if not failed_indices:
+        logger.info("Nenhuma resolução com erro encontrada. Nada a fazer.")
+        return input_file
+    
+    # Carregar dataset original para obter os dados do conflito
+    project_root = get_project_root()
+    repository_name = metadata.get('repository_name', 'elastic')
+    
+    data_path = os.path.join(project_root, INPUT_DATA_DIR, repository_name, f"{repository_name}_train_conflicts.jsonl")
+    if not os.path.exists(data_path):
+        # Tentar encontrar um arquivo JSONL correspondente
+        data_dir = os.path.join(project_root, INPUT_DATA_DIR, repository_name)
+        if os.path.exists(data_dir):
+            jsonl_files = [f for f in os.listdir(data_dir) if f.endswith('.jsonl')]
+            if jsonl_files:
+                data_path = os.path.join(data_dir, jsonl_files[0])
+            else:
+                logger.error(f"Nenhum arquivo JSONL encontrado em {data_dir}")
+                return None
+        else:
+            logger.error(f"Diretório do dataset não encontrado: {data_dir}")
+            return None
+    
+    # Carregar o dataset original
+    original_df = pd.read_json(data_path, lines=True)
+    
+    # Regenerar as resoluções com erro
+    for idx, result_idx in enumerate(failed_indices):
+        result = results[result_idx]
+        result_id = result.get('id')
+        
+        logger.info(f"Processando {idx+1}/{len(failed_indices)}: ID {result_id}")
+        
+        # Encontrar dados originais
+        original_data = original_df[original_df['id'] == result_id]
+        if len(original_data) == 0:
+            logger.warning(f"ID {result_id} não encontrado no dataset original. Pulando.")
+            continue
+        
+        original_row = original_data.iloc[0]
+        
+        try:
+            from .prompt import create_prompt
+            prompt = create_prompt(original_row['conflict_tuple'], original_row['commit_message'])
+            
+            logger.info(f"Gerando nova resolução...")
+            start_time = time.time()
+            response_text = llm_client.generate_content(prompt)
+            elapsed_time = time.time() - start_time
+            
+            logger.success(f"Resolução gerada em {elapsed_time:.2f}s")
+            
+            # Atualizar o resultado
+            results[result_idx]['conflict_resolution'] = response_text
+            
+        except Exception as e:
+            logger.error(f"Erro ao gerar resolução para ID {result_id}: {str(e)}")
+        
+        # Aguardar entre requisições
+        if idx < len(failed_indices) - 1:
+            logger.info(f"Aguardando {wait_time}s antes da próxima requisição...")
+            time.sleep(wait_time)
+    
+    # Preparar caminho de saída
+    if not output_file:
+        if save_to_original:
+            output_file = input_file
+        else:
+            base_name, ext = os.path.splitext(input_file)
+            output_file = f"{base_name}_fixed{ext}"
+    
+    # Atualizar metadata
+    metadata.update({
+        'regeneration_timestamp': datetime.now().isoformat(),
+        'total_records': len(results)
+    })
+    
+    # Salvar resultados
+    output_data = {
+        'metadata': metadata,
+        'results': results
+    }
+    
+    try:
+        with open(output_file, 'w') as f:
+            json.dump(output_data, f, indent=2)
+        
+        logger.success(f"Resultados salvos em: {output_file}")
+        return output_file
+    except Exception as e:
+        logger.error(f"Erro ao salvar resultados: {str(e)}")
+        return None
+
+def regenerate_main():
+    """
+    Função principal para regeneração de resoluções com erro.
+    Esta função pode ser chamada diretamente para regenerar resoluções.
+    """
+    # Configurar parser de argumentos
+    parser = argparse.ArgumentParser(description='Regenera resoluções de conflitos com erro.')
+    
+    # Argumentos para o arquivo de entrada
+    parser.add_argument('--input', type=str, required=True,
+                        help='Caminho para o arquivo JSON com os resultados ou padrão glob')
+    parser.add_argument('--output', type=str, 
+                        help='Caminho para salvar o novo arquivo JSON (opcional)')
+    parser.add_argument('--wait-time', type=int, default=EXPERIMENT_WAIT_TIME,
+                        help=f'Tempo de espera entre requisições (padrão: {EXPERIMENT_WAIT_TIME}s)')
+    parser.add_argument('--glob', action='store_true',
+                        help='Tratar o input como um padrão glob e processar múltiplos arquivos')
+    parser.add_argument('--overwrite', action='store_true',
+                        help='Sobrescrever o arquivo original em vez de criar um novo')
+    
+    # Adicionar argumentos do LLM
+    llm_parser = setup_cli_parser()
+    for action in llm_parser._actions:
+        if action.dest != 'help':
+            parser.add_argument(
+                *[opt for opt in action.option_strings], 
+                dest=action.dest,
+                default=action.default,
+                help=action.help,
+                choices=action.choices
+            )
+    
+    args = parser.parse_args()
+    
+    # Configurar cliente LLM
+    llm_config = get_llm_config_from_args(args)
+    llm_client = LLMClient(llm_config)
+    logger.info(f"LLM configurado: {llm_config.provider}, modelo: {llm_config.model}")
+    
+    # Processar arquivos
+    if args.glob:
+        input_files = glob(args.input)
+        logger.info(f"Encontrados {len(input_files)} arquivos com o padrão '{args.input}'")
+        
+        for input_file in input_files:
+            output_file = args.output
+            if not output_file and not args.overwrite:
+                base_name, ext = os.path.splitext(input_file)
+                output_file = f"{base_name}_fixed{ext}"
+            
+            regenerate_failed_resolutions(
+                input_file=input_file,
+                llm_client=llm_client,
+                wait_time=args.wait_time,
+                output_file=output_file,
+                save_to_original=args.overwrite
+            )
+    else:
+        regenerate_failed_resolutions(
+            input_file=args.input,
+            llm_client=llm_client,
+            wait_time=args.wait_time,
+            output_file=args.output,
+            save_to_original=args.overwrite
+        )
+    
+    logger.section("Processamento concluído")
 
 
 if __name__ == "__main__":
